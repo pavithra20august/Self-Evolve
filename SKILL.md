@@ -1,0 +1,297 @@
+---
+name: vault-evolve
+description: Self-evolving Obsidian vault — reads your notes, detects knowledge gaps, synthesizes connections, and writes new notes back into the vault autonomously
+version: 1.0.0
+platforms: [macos, linux, windows]
+metadata:
+  hermes:
+    tags: [obsidian, knowledge-management, self-evolving, synthesis, pkm]
+    category: note-taking
+    requires_toolsets: [terminal]
+    config:
+      - key: vault_evolve.vault_path
+        description: "Absolute path to your Obsidian vault folder"
+        default: "~/Documents/Obsidian Vault"
+        prompt: "What is the full path to your Obsidian vault?"
+      - key: vault_evolve.agent_folder
+        description: "Subfolder inside vault where agent writes its output notes"
+        default: "_agent"
+        prompt: "Which folder should agent-generated notes go into? (default: _agent)"
+      - key: vault_evolve.lookback_days
+        description: "How many days of recent notes to include in each evolution cycle"
+        default: "7"
+        prompt: "How many days of recent notes should each cycle analyze? (default: 7)"
+---
+
+# Vault Evolve
+
+Self-evolving knowledge system for Obsidian. Each cycle reads your recent notes,
+detects gaps and unlinked concepts, synthesizes new insight notes, and writes them
+back into the vault — so your second brain compounds over time without manual curation.
+
+## When to Use
+
+Activate this skill when the user says any of:
+- `/vault-evolve` or `/ve`
+- "evolve my vault"
+- "run a vault cycle"
+- "what gaps are in my notes"
+- "synthesize my notes"
+- "update my knowledge graph"
+- "run the self-evolution loop"
+- "what should I explore next based on my notes"
+
+Also activates automatically if a cron job fires with the message containing
+"vault-evolve" or "evolution cycle".
+
+## Setup (first run only)
+
+Before the first cycle, resolve the vault path:
+
+1. Check if `OBSIDIAN_VAULT_PATH` is set in `~/.hermes/.env`. If yes, use it.
+2. If not set, check the config key `vault_evolve.vault_path`.
+3. If neither is set, ask the user once and save to `~/.hermes/.env` as:
+   `OBSIDIAN_VAULT_PATH=/their/path`
+4. Verify the path exists with `list_files` or `read_file` on a known note.
+   If it fails, tell the user and stop — do not guess paths.
+
+The agent output folder defaults to `_agent` inside the vault root.
+Never write outside the vault root.
+
+## Procedure
+
+Run all phases in order. Do not skip phases. Do not ask the user for confirmation
+between phases — run the full cycle autonomously unless an error occurs.
+
+---
+
+### Phase 1 — Discover
+
+1. List all `.md` files in the vault using `list_files` (recursive).
+2. Filter to files modified in the last `vault_evolve.lookback_days` days.
+   If you cannot determine modification date, take the 30 most recently listed files.
+3. Read each file's full content with `read_file`.
+4. Build an internal working map:
+   - `all_topics`: every heading, bold term, and [[wikilink]] target found
+   - `defined_topics`: topics that have their own note file
+   - `undefined_topics`: topics referenced via [[wikilink]] but with no matching file
+   - `recent_themes`: recurring words/phrases appearing in 3+ recent notes
+
+---
+
+### Phase 2 — Analyze
+
+Using the working map from Phase 1, identify:
+
+**A. Knowledge gaps** — topics in `undefined_topics` that appear frequently
+   but have no dedicated note. Rank by frequency. Take top 5.
+
+**B. Orphan notes** — notes with no incoming or outgoing [[wikilinks]].
+   List up to 5.
+
+**C. Synthesis opportunities** — pairs or clusters of notes that share themes
+   but do not link to each other. Identify up to 3 clusters.
+
+**D. Contradictions or tensions** — notes that make conflicting claims about
+   the same topic. Flag if found; skip if none.
+
+**E. Next questions** — based on what the user has been exploring, what are
+   the 3 most natural questions they should explore next?
+
+---
+
+### Phase 3 — Write synthesis note
+
+Create a new file at:
+`{vault_path}/{agent_folder}/synthesis-{YYYY-MM-DD}.md`
+
+Use this exact template:
+
+```markdown
+---
+date: {YYYY-MM-DD}
+type: agent-synthesis
+cycle: {N}
+tags: [agent, synthesis, evolution]
+---
+
+# Vault Evolution — {YYYY-MM-DD}
+
+## What I found in your recent notes
+
+{2–3 sentence summary of the dominant themes in notes from the past N days.
+Write in second person: "You've been thinking a lot about..."}
+
+## Knowledge gaps
+
+{For each of the top 5 undefined topics:}
+- [[{topic}]] — referenced in {N} notes but no dedicated page exists yet
+
+## Notes that should connect
+
+{For each synthesis cluster:}
+- [[Note A]] and [[Note B]] both explore {shared theme} but don't link to each other
+
+## Orphan notes (no links in or out)
+
+{List orphan note filenames as [[wikilinks]]}
+
+## Tensions or open questions in your thinking
+
+{If contradictions found, note them. Otherwise write: "No direct contradictions found."}
+
+## What to explore next
+
+1. {Question 1}
+2. {Question 2}
+3. {Question 3}
+
+---
+*Generated by vault-evolve skill — cycle {N}*
+```
+
+---
+
+### Phase 4 — Create stub notes for gaps
+
+For each knowledge gap identified in Phase 2A, create a stub note at:
+`{vault_path}/{agent_folder}/stubs/{topic-slug}.md`
+
+Use this template for each stub:
+
+```markdown
+---
+date: {YYYY-MM-DD}
+type: stub
+status: empty
+created-by: vault-evolve
+tags: [stub, agent]
+---
+
+# {Topic Name}
+
+> This note was created by vault-evolve because you reference [[{Topic Name}]]
+> in your notes but haven't defined it yet.
+
+## Questions to answer
+
+- What is {Topic Name}?
+- How does it relate to {the note that referenced it most}?
+- What do you already know about this from experience?
+
+## Referenced from
+
+{List the notes that wikilink to this topic}
+```
+
+---
+
+### Phase 5 — Update evolution log
+
+Append a one-line entry to `{vault_path}/{agent_folder}/evolution-log.md`.
+Create the file if it doesn't exist. The file accumulates across all cycles.
+
+Append this line:
+```
+| {YYYY-MM-DD} | {N gaps found} | {N stubs created} | {N synthesis clusters} | [[synthesis-{YYYY-MM-DD}]] |
+```
+
+If the file is new, prepend a header first:
+```markdown
+# Vault Evolution Log
+
+| Date | Gaps | Stubs | Clusters | Synthesis note |
+|------|------|-------|----------|----------------|
+```
+
+---
+
+### Phase 6 — Report to user
+
+After all files are written, respond with a brief summary. Keep it short.
+Do not repeat the full synthesis note — the user can open it in Obsidian.
+
+Example format:
+```
+Cycle complete. Here's what I found:
+
+• 5 knowledge gaps → stubs created in _agent/stubs/
+• 3 note clusters that should be linked
+• 2 orphan notes with no connections
+• Synthesis note written: _agent/synthesis-2026-06-20.md
+
+Top gap: [[Zettelkasten]] — referenced in 8 notes but undefined.
+Next question I'd explore: {Question 1 from synthesis note}
+```
+
+---
+
+## Cycle numbering
+
+Track the cycle number by counting lines in `evolution-log.md` (excluding header rows).
+Cycle 1 = first entry. If the log doesn't exist yet, this is cycle 1.
+
+## File naming rules
+
+- Synthesis notes: `synthesis-YYYY-MM-DD.md` — one per day, overwrite if re-run same day
+- Stub notes: lowercase, hyphens for spaces, no special chars. `neural-networks.md` not `Neural Networks.md`
+- Never overwrite user-authored notes — only write to `{agent_folder}/` subfolder
+- Never delete any files
+
+## Wikilink rules
+
+- Always use Obsidian `[[double bracket]]` syntax for links
+- When linking to a note, use the note's filename without `.md` extension
+- When creating stubs, the stub filename slug must exactly match how it appears in `[[wikilinks]]` in other notes (case-insensitive match)
+
+## Pitfalls
+
+- **Path with spaces**: Obsidian vaults often have spaces in the path (e.g. `Obsidian Vault`). Always quote paths when passing to shell tools. Prefer `read_file` and `write_file` over shell `cat`/`echo` to avoid quoting issues.
+- **Don't hallucinate note contents**: only report themes and gaps actually found in files you read. If you couldn't read a file, skip it and note how many were skipped.
+- **Don't synthesize across too many notes at once**: if the vault has 500+ files, limit Phase 1 to the 30 most recently modified. Quality over quantity.
+- **Stub collisions**: before creating a stub, check if the file already exists. If it does, skip it silently.
+- **Evolution log format**: always append, never rewrite the whole file. Use `patch` or `append` tools, not `write_file` on the whole log.
+
+## Verification
+
+After the cycle, confirm:
+- `_agent/synthesis-{today}.md` exists and is non-empty
+- `_agent/evolution-log.md` has a new line for today
+- Each gap from Phase 2A has a corresponding file in `_agent/stubs/`
+- No files were written outside `{vault_path}/{agent_folder}/`
+
+If any check fails, report it to the user with the specific file that's missing.
+
+## Cron setup (optional)
+
+To run automatically every morning, the user can add this to Hermes config:
+
+```yaml
+# ~/.hermes/config.yaml
+cron:
+  jobs:
+    - schedule: "0 8 * * *"
+      message: "Run vault-evolve cycle"
+      profile: default
+```
+
+Or via CLI:
+```bash
+hermes config set cron.jobs[0].schedule "0 8 * * *"
+hermes config set cron.jobs[0].message "Run vault-evolve cycle"
+```
+
+## Manual trigger
+
+```bash
+# One-shot from terminal
+hermes send "Run vault-evolve cycle"
+
+# Interactive
+hermes
+> /vault-evolve
+
+# Short alias
+hermes
+> /ve
+```
